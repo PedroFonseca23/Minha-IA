@@ -1,28 +1,71 @@
 import os
+import io
 import sqlite3
 import threading
-from flask import Flask
+import base64
+import qrcode
+from flask import Flask, render_template_string
 from neonize.client import NewClient
-from neonize.events import MessageEv, ConnectedEv
+from neonize.events import MessageEv, ConnectedEv, QREv
+
+# Variables globais de estado
+qr_code_base64 = None
+status_conexao = "A aguardar inicialização do servidor..."
 
 # ==============================================================================
-# SERVIDOR WEB MÍNIMO (Para o Render aceitar o Plano Free $0/mês)
+# SERVIDOR WEB COM PAINEL E EXIBIÇÃO DO CÓDIGO QR
 # ==============================================================================
 app = Flask(__name__)
 
+HTML_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="refresh" content="5">
+    <title>Conectar IA WhatsApp</title>
+    <style>
+        body { font-family: Arial, sans-serif; background-color: #f0f2f5; margin: 0; padding: 20px; display: flex; justify-content: center; align-items: center; min-height: 90vh; }
+        .card { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); text-align: center; max-width: 400px; width: 100%; }
+        h2 { color: #075e54; margin-bottom: 10px; }
+        .qr-img { max-width: 100%; height: auto; border: 4px solid #25d366; border-radius: 8px; margin: 15px 0; }
+        .status-online { color: #25d366; font-size: 1.2em; font-weight: bold; }
+        .info { color: #666; font-size: 0.9em; margin-top: 15px; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h2>🤖 IA WhatsApp em Python</h2>
+        {% if conectado %}
+            <div class="status-online">✅ IA ONLINE e Conectada!</div>
+            <p>O seu robô está ativo e a responder a mensagens no WhatsApp.</p>
+        {% elif qr_img %}
+            <p>Abra o WhatsApp no telemóvel > <b>Aparelhos conectados</b> > <b>Conectar um aparelho</b> e faça o scan do Código QR abaixo:</p>
+            <img class="qr-img" src="data:image/png;base64,{{ qr_img }}" alt="Código QR do WhatsApp">
+            <p class="info">🔄 A página atualiza automaticamente a cada 5 segundos.</p>
+        {% else %}
+            <p><b>Estado:</b> {{ status }}</p>
+            <p class="info">🔄 A página atualiza automaticamente a cada 5 segundos. Aguarde...</p>
+        {% endif %}
+    </div>
+</body>
+</html>
+"""
+
 @app.route("/")
 def home():
-    return "IA WhatsApp em Python está ONLINE e Gratuita!", 200
+    conectado = (status_conexao == "ONLINE")
+    return render_template_string(HTML_TEMPLATE, qr_img=qr_code_base64, status=status_conexao, conectado=conectado)
 
 def iniciar_servidor_web():
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port)
 
-# Inicia o servidor web numa thread paralela
 threading.Thread(target=iniciar_servidor_web, daemon=True).start()
 
 # ==============================================================================
-# 1. BANCO DE DADOS LOCAL DA IA (SQLite)
+# BANCO DE DADOS LOCAL DA IA (SQLite)
 # ==============================================================================
 DB_PATH = "ia_memoria.db"
 
@@ -78,12 +121,31 @@ def consultar_ou_ensinar_ia(texto_usuario: str) -> str:
 inicializar_banco()
 
 # ==============================================================================
-# 2. CONEXÃO COM O WHATSAPP E QR CODE (Neonize)
+# CONEXÃO COM O WHATSAPP E EVENTOS DO QR CODE (Neonize)
 # ==============================================================================
 client = NewClient("sessao_whatsapp.db")
 
+@client.event(QREv)
+def on_qr(client: NewClient, qr: QREv):
+    global qr_code_base64, status_conexao
+    try:
+        qr_string = getattr(qr, 'code', None) or str(qr)
+        
+        # Gera a imagem PNG do Código QR em memória
+        img = qrcode.make(qr_string)
+        buffered = io.BytesIO()
+        img.save(buffered, format="PNG")
+        qr_code_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
+        status_conexao = "Código QR gerado! Aguardando leitura..."
+        print("\n📱 Novo Código QR gerado e disponível na página Web!\n")
+    except Exception as e:
+        print(f"Erro ao converter Código QR em imagem: {e}")
+
 @client.event(ConnectedEv)
 def on_connected(client: NewClient, __):
+    global qr_code_base64, status_conexao
+    qr_code_base64 = None
+    status_conexao = "ONLINE"
     print("\n✅ Conectado com sucesso ao WhatsApp! A IA em Python está pronta.\n")
 
 @client.event(MessageEv)
