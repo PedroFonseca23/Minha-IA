@@ -8,12 +8,22 @@ from flask import Flask, render_template_string
 from neonize.client import NewClient
 from neonize.events import MessageEv, ConnectedEv, QREv
 
-# Variables globais de estado
+# ==============================================================================
+# 0. LIMPEZA DE SESSÃO ANTIGA (Garante geração de um novo QR Code)
+# ==============================================================================
+# Se existir uma sessão antiga pendente/corrompida, remove para não travar a conexão
+if os.path.exists("sessao_whatsapp.db"):
+    try:
+        os.remove("sessao_whatsapp.db")
+        print("Sessão antiga removida com sucesso. A gerar novo QR Code...")
+    except Exception as e:
+        print(f"Aviso ao remover sessão: {e}")
+
 qr_code_base64 = None
-status_conexao = "A aguardar inicialização do servidor..."
+status_conexao = "A iniciar o WhatsApp e a gerar o Código QR..."
 
 # ==============================================================================
-# SERVIDOR WEB COM PAINEL E EXIBIÇÃO DO CÓDIGO QR
+# 1. SERVIDOR WEB COM PAINEL E CÓDIGO QR
 # ==============================================================================
 app = Flask(__name__)
 
@@ -65,7 +75,7 @@ def iniciar_servidor_web():
 threading.Thread(target=iniciar_servidor_web, daemon=True).start()
 
 # ==============================================================================
-# BANCO DE DADOS LOCAL DA IA (SQLite)
+# 2. BANCO DE DADOS LOCAL DA IA (SQLite)
 # ==============================================================================
 DB_PATH = "ia_memoria.db"
 
@@ -121,7 +131,7 @@ def consultar_ou_ensinar_ia(texto_usuario: str) -> str:
 inicializar_banco()
 
 # ==============================================================================
-# CONEXÃO COM O WHATSAPP E EVENTOS DO QR CODE (Neonize)
+# 3. CONEXÃO WHATSAPP E GERADORD DE QR CODE (Neonize)
 # ==============================================================================
 client = NewClient("sessao_whatsapp.db")
 
@@ -130,15 +140,14 @@ def on_qr(client: NewClient, qr: QREv):
     global qr_code_base64, status_conexao
     try:
         qr_string = getattr(qr, 'code', None) or str(qr)
-        
-        # Gera a imagem PNG do Código QR em memória
         img = qrcode.make(qr_string)
         buffered = io.BytesIO()
         img.save(buffered, format="PNG")
         qr_code_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
-        status_conexao = "Código QR gerado! Aguardando leitura..."
-        print("\n📱 Novo Código QR gerado e disponível na página Web!\n")
+        status_conexao = "Código QR pronto para leitura!"
+        print("\n📱 Novo Código QR gerado com sucesso!\n")
     except Exception as e:
+        status_conexao = f"Erro ao gerar QR: {e}"
         print(f"Erro ao converter Código QR em imagem: {e}")
 
 @client.event(ConnectedEv)
