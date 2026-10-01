@@ -1,2 +1,4 @@
 neonize
 flask
+qrcode
+pillow
